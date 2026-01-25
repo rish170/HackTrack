@@ -20,6 +20,7 @@ Logo:
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
@@ -28,6 +29,7 @@ from utils.constants import APP_NAME, LOGO_PATH
 
 
 def main() -> None:
+    load_dotenv()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
 
