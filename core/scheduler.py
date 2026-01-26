@@ -4,7 +4,7 @@ from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from utils.helpers import safe_interval_hours
+from utils.helpers import safe_interval_seconds
 
 
 class Scheduler(QObject):
@@ -19,8 +19,8 @@ class Scheduler(QObject):
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._on_tick)
 
-    def start(self, hours: float) -> None:
-        self._interval_seconds = int(safe_interval_hours(hours) * 3600)
+    def start(self, seconds: int) -> None:
+        self._interval_seconds = safe_interval_seconds(seconds)
         self._countdown = 0
         self._emit_tick()
         self._timer.start()

@@ -7,7 +7,6 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog,
-    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -15,6 +14,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QProgressBar,
+    QSpinBox,
     QSpacerItem,
     QVBoxLayout,
     QWidget,
@@ -25,7 +25,7 @@ from utils.constants import APP_NAME, LOGO_PATH, STATUS_PHASES
 
 
 class Dashboard(QWidget):
-    start_requested = pyqtSignal(str, str, float)
+    start_requested = pyqtSignal(str, str, int)
     theme_toggled = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -91,11 +91,21 @@ class Dashboard(QWidget):
         self.sheet_edit = QLineEdit()
         self.sheet_edit.setPlaceholderText("Google Sheet URL (optional)")
 
-        self.interval_input = QDoubleSpinBox()
-        self.interval_input.setRange(0.1, 72.0)
-        self.interval_input.setSingleStep(0.5)
-        self.interval_input.setValue(1.0)
-        self.interval_input.setSuffix(" h")
+        self.hour_box = QSpinBox()
+        self.hour_box.setRange(0, 72)
+        self.hour_box.setValue(1)
+        self.minute_box = QSpinBox()
+        self.minute_box.setRange(0, 59)
+        self.second_box = QSpinBox()
+        self.second_box.setRange(0, 59)
+
+        time_layout = QHBoxLayout()
+        time_layout.setSpacing(6)
+        time_layout.addWidget(self.hour_box)
+        time_layout.addWidget(QLabel(":"))
+        time_layout.addWidget(self.minute_box)
+        time_layout.addWidget(QLabel(":"))
+        time_layout.addWidget(self.second_box)
 
         self.start_btn = QPushButton("Start Monitoring")
         self.start_btn.clicked.connect(self._emit_start)
@@ -108,8 +118,8 @@ class Dashboard(QWidget):
         grid.addWidget(self.sheet_edit, 1, 1)
         grid.addWidget(QLabel(""), 1, 2)
 
-        grid.addWidget(QLabel("Interval (hours)"), 2, 0)
-        grid.addWidget(self.interval_input, 2, 1)
+        grid.addWidget(QLabel("Interval (hh:mm:ss)"), 2, 0)
+        grid.addLayout(time_layout, 2, 1)
         grid.addWidget(QLabel(""), 2, 2)
 
         grid.addWidget(self.start_btn, 3, 0, 1, 3)
@@ -151,8 +161,8 @@ class Dashboard(QWidget):
     def _emit_start(self) -> None:
         excel_path = self.excel_edit.text().strip()
         sheet_url = self.sheet_edit.text().strip()
-        interval = float(self.interval_input.value())
-        self.start_requested.emit(excel_path, sheet_url, interval)
+        interval_seconds = self.interval_seconds()
+        self.start_requested.emit(excel_path, sheet_url, interval_seconds)
 
     def update_progress(self, phase: str, percent: int, message: str) -> None:
         if phase in self._progress_bars:
@@ -179,3 +189,24 @@ class Dashboard(QWidget):
     def set_theme_state(self, dark: bool) -> None:
         self.theme_button.setChecked(not dark)
         self.theme_button.setText("Switch to Dark" if not dark else "Switch to Light")
+
+    def interval_seconds(self) -> int:
+        hours = int(self.hour_box.value())
+        minutes = int(self.minute_box.value())
+        seconds = int(self.second_box.value())
+        total = hours * 3600 + minutes * 60 + seconds
+        return max(total, 1)
+
+    def set_interval_seconds(self, total_seconds: int) -> None:
+        if total_seconds <= 0:
+            return
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        self.hour_box.setValue(min(hours, self.hour_box.maximum()))
+        self.minute_box.setValue(minutes)
+        self.second_box.setValue(seconds)
+
+    def set_sources(self, excel_path: str, sheet_url: str) -> None:
+        self.excel_edit.setText(excel_path)
+        self.sheet_edit.setText(sheet_url)

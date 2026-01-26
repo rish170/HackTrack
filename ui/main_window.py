@@ -15,6 +15,7 @@ from data.google_sheets_manager import read_sheet, update_rows as update_sheet
 from ui.dashboard import Dashboard
 from ui.styles import DARK, LIGHT, apply_palette, stylesheet
 from utils.constants import APP_NAME
+from utils.state_store import load_state, save_state
 
 
 class AnalyzeWorker(QThread):
@@ -26,19 +27,18 @@ class AnalyzeWorker(QThread):
         self,
         excel_path: str,
         sheet_url: str,
-        interval_hours: float,
         parent: Optional[QMainWindow] = None,
     ) -> None:
         super().__init__(parent)
         self.excel_path = excel_path
         self.sheet_url = sheet_url
-        self.interval_hours = interval_hours
 
     def run(self) -> None:
         try:
             self._execute()
         except Exception as exc:  # pylint: disable=broad-except
-            self.failed.emit(str(exc))
+            message = str(exc).strip() or repr(exc)
+            self.failed.emit(message)
 
     def _execute(self) -> None:
         sources = []
@@ -109,7 +109,16 @@ class MainWindow(QMainWindow):
         self._dark = True
         self._apply_theme()
 
-    def _handle_start(self, excel_path: str, sheet_url: str, interval: float) -> None:
+        # restore last state if present
+        state = load_state()
+        excel_path = state.get("excel_path", "") if isinstance(state, dict) else ""
+        sheet_url = state.get("sheet_url", "") if isinstance(state, dict) else ""
+        interval_seconds = state.get("interval_seconds", 0) if isinstance(state, dict) else 0
+        self.dashboard.set_sources(excel_path, sheet_url)
+        if interval_seconds:
+            self.dashboard.set_interval_seconds(interval_seconds)
+
+    def _handle_start(self, excel_path: str, sheet_url: str, interval_seconds: int) -> None:
         if not excel_path and not sheet_url:
             QMessageBox.warning(self, "Input Required", "Please select an Excel file or provide a Google Sheet URL.")
             return
@@ -117,9 +126,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid File", "Please choose a valid Excel (.xlsx or .xlsm) file.")
             return
 
+        save_state({"excel_path": excel_path, "sheet_url": sheet_url, "interval_seconds": interval_seconds})
         self.dashboard.reset_progress()
         self.dashboard.set_busy(True)
-        self.scheduler.start(interval)
+        self.scheduler.start(interval_seconds)
 
     def _run_cycle(self) -> None:
         if self._current_worker and self._current_worker.isRunning():
@@ -127,11 +137,11 @@ class MainWindow(QMainWindow):
 
         excel_path = self.dashboard.excel_edit.text().strip()
         sheet_url = self.dashboard.sheet_edit.text().strip()
-        interval = float(self.dashboard.interval_input.value())
+        interval_seconds = self.dashboard.interval_seconds()
 
         self.dashboard.reset_progress()
         self.dashboard.set_busy(True)
-        self._current_worker = AnalyzeWorker(excel_path, sheet_url, interval, parent=self)
+        self._current_worker = AnalyzeWorker(excel_path, sheet_url, parent=self)
         self._current_worker.progress.connect(self.dashboard.update_progress)
         self._current_worker.finished.connect(self._on_finished)
         self._current_worker.failed.connect(self._on_failed)
@@ -144,8 +154,9 @@ class MainWindow(QMainWindow):
 
     def _on_failed(self, error: str) -> None:
         self.dashboard.set_busy(False)
-        self.dashboard.update_progress("process", 0, f"Error: {error}")
-        QMessageBox.critical(self, "Run failed", error)
+        message = error or "Unknown error"
+        self.dashboard.update_progress("process", 0, f"Error: {message}")
+        QMessageBox.critical(self, "Run failed", message)
         self._current_worker = None
 
     def _toggle_theme(self) -> None:

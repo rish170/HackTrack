@@ -77,6 +77,7 @@ def stylesheet(theme: dict) -> str:
         left: 10px;
         padding: 0 4px 4px 4px;
         color: {text_secondary};
+        background: transparent;
     }}
     QPushButton {{
         background: {accent};
@@ -112,6 +113,7 @@ def stylesheet(theme: dict) -> str:
     QLabel.status-success {{ color: {success}; }}
     QLabel.status-warning {{ color: {warning}; }}
     QLabel.status-error {{ color: {error}; }}
+    QLabel {{ background: transparent; }}
     QToolTip {{
         background: {panel};
         color: {text};
