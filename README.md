@@ -127,7 +127,8 @@ HackTrack/
 │   └── google_sheets_manager.py
 ├── utils/
 │   ├── constants.py
-│   └── helpers.py
+│   ├── helpers.py
+│   └── state_store.py
 ├── assets/
 │   └── logo.png
 └── testers/
