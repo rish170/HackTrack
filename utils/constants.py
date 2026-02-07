@@ -22,6 +22,18 @@ EXCEL_COLUMNS = [
     "Top Languages",
 ]
 
+COMMIT_HISTORY_HEADERS = [
+    "Commit SHA",
+    "Commit Message",
+    "Commit Author",
+    "Commit Date (UTC)",
+    "Branch",
+    "Total Commits at Snapshot",
+    "Languages",
+    "README Present",
+    "Snapshot Timestamp",
+]
+
 STATUS_PHASES = {
     "fetch": "Fetching from GitHub",
     "process": "Processing data",
