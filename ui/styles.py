@@ -101,12 +101,12 @@ def stylesheet(theme: dict) -> str:
         background: {panel};
         border: 1px solid {border};
         border-radius: 10px;
-        text-visible: true;
         color: {text_secondary};
         height: 16px;
+        text-align: center;
     }}
     QProgressBar::chunk {{
-        background: linear-gradient(45deg, {accent} 0%, {accent_hover} 100%);
+        background: linear-gradient(45deg, {success} 0%, #22c55e 100%);
         border-radius: 9px;
         margin: 1px;
     }}
