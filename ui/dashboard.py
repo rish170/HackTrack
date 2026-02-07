@@ -26,11 +26,14 @@ from utils.constants import APP_NAME, LOGO_PATH, STATUS_PHASES
 
 class Dashboard(QWidget):
     start_requested = pyqtSignal(str, str, int)
+    stop_requested = pyqtSignal()
     theme_toggled = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._progress_bars: dict[str, QProgressBar] = {}
+        self._busy = False
+        self._monitoring = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -110,6 +113,10 @@ class Dashboard(QWidget):
         self.start_btn = QPushButton("Start Monitoring")
         self.start_btn.clicked.connect(self._emit_start)
 
+        self.stop_btn = QPushButton("Stop Monitoring")
+        self.stop_btn.setDisabled(True)
+        self.stop_btn.clicked.connect(self.stop_requested.emit)
+
         grid.addWidget(QLabel("Excel File"), 0, 0)
         grid.addWidget(self.excel_edit, 0, 1)
         grid.addWidget(excel_btn, 0, 2)
@@ -122,7 +129,11 @@ class Dashboard(QWidget):
         grid.addLayout(time_layout, 2, 1)
         grid.addWidget(QLabel(""), 2, 2)
 
-        grid.addWidget(self.start_btn, 3, 0, 1, 3)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        btn_row.addWidget(self.start_btn)
+        btn_row.addWidget(self.stop_btn)
+        grid.addLayout(btn_row, 3, 0, 1, 3)
 
         box.setLayout(grid)
         return box
@@ -130,14 +141,24 @@ class Dashboard(QWidget):
     def _build_progress(self) -> QGroupBox:
         box = QGroupBox("Progress")
         layout = QGridLayout()
-        for row, key in enumerate(["fetch", "process", "excel", "sheets"]):
-            label = QLabel(STATUS_PHASES.get(key, key.title()))
+        for i, phase in enumerate(STATUS_PHASES):
+            label = QLabel(STATUS_PHASES[phase])
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setValue(0)
-            self._progress_bars[key] = bar
-            layout.addWidget(label, row, 0)
-            layout.addWidget(bar, row, 1)
+            bar.setFormat("%p%")
+            bar.setTextVisible(True)
+            # Force green chunk color
+            bar.setStyleSheet("""
+                QProgressBar::chunk {
+                    background: #22c55e;
+                    border-radius: 9px;
+                    margin: 1px;
+                }
+            """)
+            self._progress_bars[phase] = bar
+            layout.addWidget(label, i, 0)
+            layout.addWidget(bar, i, 1)
         self.status_label = QLabel("Idle")
         self.status_label.setObjectName("status-label")
         layout.addWidget(self.status_label, len(self._progress_bars), 0, 1, 2)
@@ -184,7 +205,16 @@ class Dashboard(QWidget):
             self.countdown_label.setText(f"Next fetch in {hrs:02d}:{mins:02d}:{secs:02d}")
 
     def set_busy(self, busy: bool) -> None:
-        self.start_btn.setDisabled(busy)
+        self._busy = busy
+        self._sync_buttons()
+
+    def set_monitoring(self, monitoring: bool) -> None:
+        self._monitoring = monitoring
+        self._sync_buttons()
+
+    def _sync_buttons(self) -> None:
+        self.start_btn.setDisabled(self._busy or self._monitoring)
+        self.stop_btn.setDisabled(not self._monitoring)
 
     def set_theme_state(self, dark: bool) -> None:
         self.theme_button.setChecked(not dark)
