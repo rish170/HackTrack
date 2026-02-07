@@ -1,12 +1,13 @@
 import os
-from typing import Optional
+import re
+from typing import Iterable, Optional
 
 import gspread
 import pandas as pd
 from google.auth.transport.requests import Request
 from google.oauth2.service_account import Credentials
 
-from utils.constants import EXCEL_COLUMNS
+from utils.constants import COMMIT_HISTORY_HEADERS, EXCEL_COLUMNS
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -54,3 +55,64 @@ def update_rows(sheet_url: str, new_df: pd.DataFrame, worksheet: Optional[str] =
         merged = pd.concat([current, new_df], ignore_index=True)
         merged.drop_duplicates(subset=["Team Name", "GitHub Repo URL"], keep="last", inplace=True)
     write_sheet(sheet_url, merged[EXCEL_COLUMNS], worksheet=worksheet, service_account_path=service_account_path)
+
+
+def sanitize_worksheet_title(value: str) -> str:
+    title = (value or "").strip()
+    title = re.sub(r"[\\/\?\*\[\]:]", " ", title)
+    title = re.sub(r"\s+", " ", title).strip()
+    if not title:
+        title = "Team"
+    if len(title) > 100:
+        title = title[:100].rstrip()
+    return title
+
+
+def _open_spreadsheet(sheet_url: str, service_account_path: Optional[str] = None):
+    creds = _get_credentials(service_account_path)
+    client = gspread.authorize(creds)
+    return client.open_by_url(sheet_url)
+
+
+def get_or_create_team_worksheet(
+    sheet_url: str,
+    team_title: str,
+    service_account_path: Optional[str] = None,
+):
+    sh = _open_spreadsheet(sheet_url, service_account_path=service_account_path)
+    base = sanitize_worksheet_title(team_title)
+    try:
+        ws = sh.worksheet(base)
+    except Exception:
+        title = base
+        existing_titles = {w.title for w in sh.worksheets()}
+        if title in existing_titles:
+            idx = 2
+            while True:
+                candidate = f"{base} {idx}"
+                if candidate not in existing_titles:
+                    title = candidate
+                    break
+                idx += 1
+        ws = sh.add_worksheet(title=title, rows=1000, cols=len(COMMIT_HISTORY_HEADERS))
+
+    values = ws.row_values(1)
+    if not values:
+        ws.update([COMMIT_HISTORY_HEADERS])
+    elif values != COMMIT_HISTORY_HEADERS:
+        ws.update("A1", [COMMIT_HISTORY_HEADERS])
+    return ws
+
+
+def get_existing_commit_shas(ws) -> set[str]:
+    values = ws.col_values(1)
+    if not values:
+        return set()
+    shas = {v.strip() for v in values[1:] if v and str(v).strip()}
+    return shas
+
+
+def append_commit_history_rows(ws, rows: list[list[str]]) -> None:
+    if not rows:
+        return
+    ws.append_rows(rows, value_input_option="RAW")
