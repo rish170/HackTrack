@@ -135,6 +135,7 @@ HackTrack/
     └── sheet_tester.py (optional, user-added)
 ```
 
+
 ## Troubleshooting
 - **Google Sheets auth errors**: Ensure `GOOGLE_SERVICE_ACCOUNT_JSON` points to a valid key and the Sheet is shared with the service account email.
 - **Rate limit or 403 from GitHub**: Set `GITHUB_TOKEN`; ensure the token has repo scope for private repos.
