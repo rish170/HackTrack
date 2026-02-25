@@ -12,7 +12,7 @@ from pathlib import Path
 from core.github_analyzer import GitHubAnalyzer
 from core.github_analyzer import RepoSnapshot
 from core.scheduler import Scheduler
-from data.excel_manager import append_team_commit_history, is_valid_excel, read_excel
+from data.excel_manager import is_valid_excel, read_excel
 from data.google_sheets_manager import append_commit_history_rows, get_existing_commit_shas, get_or_create_team_worksheet
 from ui.dashboard import Dashboard
 from ui.styles import DARK, LIGHT, apply_palette, stylesheet
@@ -24,6 +24,7 @@ class AnalyzeWorker(QThread):
     progress = pyqtSignal(str, int, str)
     finished = pyqtSignal(str)
     failed = pyqtSignal(str)
+    rate_limit = pyqtSignal(int, int)  # remaining, limit
 
     def __init__(
         self,
@@ -46,14 +47,17 @@ class AnalyzeWorker(QThread):
         if not self.excel_path:
             raise ValueError("Excel input is required for team list.")
 
+        analyzer = GitHubAnalyzer()
+        # Initial rate limit emit
+        rl_info = analyzer.get_rate_limit_info()
+        if rl_info["remaining"] is not None:
+            self.rate_limit.emit(rl_info["remaining"], rl_info["limit"])
+
         self.progress.emit("process", 10, "Reading Excel submissions")
         df = read_excel(self.excel_path)
         df.drop_duplicates(subset=["Team Name", "GitHub Repo URL"], keep="last", inplace=True)
-
-        analyzer = GitHubAnalyzer()
         total = len(df)
 
-        excel_report_path = self._excel_report_path(self.excel_path)
         if self.sheet_url:
             self.progress.emit("sheets", 5, "Preparing Google Sheets output")
 
@@ -79,8 +83,10 @@ class AnalyzeWorker(QThread):
                 progress_cb=self.progress.emit,
             )
 
-            # prefer repo name for worksheet naming
-            worksheet_title = snapshot.repo or worksheet_title
+            # Emit rate limit after fetch
+            rl_info = analyzer.get_rate_limit_info()
+            if rl_info["remaining"] is not None:
+                self.rate_limit.emit(rl_info["remaining"], rl_info["limit"])
 
             rows = self._snapshot_to_rows(snapshot)
 
@@ -91,11 +97,11 @@ class AnalyzeWorker(QThread):
                 new_rows = [r for r in rows if r and r[0] and r[0] not in existing]
                 append_commit_history_rows(ws, new_rows)
 
-            # Excel report append
-            self.progress.emit("excel", min(95, pct), f"Updating Excel history for {worksheet_title}")
-            append_team_commit_history(excel_report_path, worksheet_title, rows)
+                # Emit rate limit after sheet write (though append doesn't use GitHub API, it's good practice)
+                rl_info = analyzer.get_rate_limit_info()
+                if rl_info["remaining"] is not None:
+                    self.rate_limit.emit(rl_info["remaining"], rl_info["limit"])
 
-        self.progress.emit("excel", 100, f"Excel report updated: {excel_report_path}")
         if self.sheet_url:
             self.progress.emit("sheets", 100, "Google Sheets updated")
 
@@ -103,25 +109,28 @@ class AnalyzeWorker(QThread):
         self.finished.emit("Monitoring snapshot complete")
 
     @staticmethod
-    def _excel_report_path(input_path: str) -> str:
-        p = Path(input_path)
-        return str(p.with_name(f"{p.stem}_report.xlsx"))
-
-    @staticmethod
     def _snapshot_to_rows(snapshot: RepoSnapshot) -> list[list[str]]:
         rows: list[list[str]] = []
-        for c in snapshot.commits:
+        for i, c in enumerate(snapshot.commits, start=1):
+            # Parse date and time from date_utc (format: 2024-02-25T12:34:56Z)
+            try:
+                dt = datetime.strptime(c.date_utc, "%Y-%m-%dT%H:%M:%SZ")
+                commit_date = dt.strftime("%Y-%m-%d")
+                commit_time = dt.strftime("%H:%M:%S")
+            except Exception:
+                commit_date = c.date_utc
+                commit_time = ""
+
             rows.append(
                 [
-                    c.sha,
-                    c.message,
-                    c.author,
-                    c.date_utc,
-                    snapshot.branch,
-                    str(snapshot.total_commits_at_snapshot),
-                    snapshot.languages,
-                    "Yes" if snapshot.readme_present else "No",
-                    snapshot.snapshot_timestamp_utc,
+                    str(i),                    # Sno
+                    commit_date,               # Commit Date
+                    commit_time,               # Commit Time
+                    c.message,                 # Commit Message
+                    str(c.total_lines),        # Total Lines
+                    str(c.total_files),        # Total Files
+                    snapshot.languages,        # Languages
+                    snapshot.snapshot_timestamp_utc, # Snapshot Timestamp
                 ]
             )
         return rows
@@ -193,6 +202,7 @@ class MainWindow(QMainWindow):
         self.dashboard.set_busy(True)
         self._current_worker = AnalyzeWorker(excel_path, sheet_url, parent=self)
         self._current_worker.progress.connect(self.dashboard.update_progress)
+        self._current_worker.rate_limit.connect(self.dashboard.set_rate_limit)
         self._current_worker.finished.connect(self._on_finished)
         self._current_worker.failed.connect(self._on_failed)
         self._current_worker.start()

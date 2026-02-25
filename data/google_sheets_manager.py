@@ -113,6 +113,13 @@ def get_existing_commit_shas(ws) -> set[str]:
 
 
 def append_commit_history_rows(ws, rows: list[list[str]]) -> None:
+    # Always append a blank row first to separate from the last session
+    blank_row = [""] * len(COMMIT_HISTORY_HEADERS)
+    
     if not rows:
-        return
-    ws.append_rows(rows, value_input_option="RAW")
+        # If no new commits, add blank row then a row with dashes
+        separator_row = ["-"] * len(COMMIT_HISTORY_HEADERS)
+        ws.append_rows([blank_row, separator_row], value_input_option="RAW")
+    else:
+        # If new commits found, add blank row then the commit data
+        ws.append_rows([blank_row] + rows, value_input_option="RAW")

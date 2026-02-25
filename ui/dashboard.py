@@ -50,6 +50,9 @@ class Dashboard(QWidget):
         progress = self._build_progress()
         main_layout.addWidget(progress)
 
+        rate_limit = self._build_rate_limit()
+        main_layout.addWidget(rate_limit)
+
         countdown = self._build_countdown()
         main_layout.addWidget(countdown)
 
@@ -141,8 +144,10 @@ class Dashboard(QWidget):
     def _build_progress(self) -> QGroupBox:
         box = QGroupBox("Progress")
         layout = QGridLayout()
-        for i, phase in enumerate(STATUS_PHASES):
-            label = QLabel(STATUS_PHASES[phase])
+        # Filter STATUS_PHASES to only include relevant ones
+        relevant_phases = {k: v for k, v in STATUS_PHASES.items() if k != "excel"}
+        for i, phase in enumerate(relevant_phases):
+            label = QLabel(relevant_phases[phase])
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setValue(0)
@@ -164,6 +169,25 @@ class Dashboard(QWidget):
         layout.addWidget(self.status_label, len(self._progress_bars), 0, 1, 2)
         box.setLayout(layout)
         return box
+
+    def _build_rate_limit(self) -> QGroupBox:
+        box = QGroupBox("GitHub API Requests Left")
+        layout = QVBoxLayout()
+        self.rate_limit_label = QLabel("Waiting for first request...")
+        self.rate_limit_label.setStyleSheet("font-size: 16px; font-weight: 600; color: #3b82f6;")
+        layout.addWidget(self.rate_limit_label)
+        box.setLayout(layout)
+        return box
+
+    def set_rate_limit(self, remaining: int, limit: int) -> None:
+        self.rate_limit_label.setText(f"{remaining} / {limit} requests available")
+        # Change color based on remaining requests
+        if remaining < 100:
+            self.rate_limit_label.setStyleSheet("font-size: 16px; font-weight: 600; color: #ef4444;")
+        elif remaining < 500:
+            self.rate_limit_label.setStyleSheet("font-size: 16px; font-weight: 600; color: #f59e0b;")
+        else:
+            self.rate_limit_label.setStyleSheet("font-size: 16px; font-weight: 600; color: #3b82f6;")
 
     def _build_countdown(self) -> QGroupBox:
         box = QGroupBox("Countdown")

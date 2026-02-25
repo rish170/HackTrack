@@ -17,6 +17,8 @@ class CommitEntry:
     message: str
     author: str
     date_utc: str
+    total_lines: int = 0
+    total_files: int = 0
 
 
 @dataclass
@@ -51,6 +53,44 @@ class RepoAnalysis:
 class GitHubAnalyzer:
     def __init__(self, token: Optional[str] = None) -> None:
         self.token = token or get_github_token()
+        self.requests_remaining: Optional[int] = None
+        self.requests_limit: Optional[int] = None
+        # Fetch initial rate limit
+        self.check_rate_limit()
+
+    def check_rate_limit(self) -> Dict[str, Optional[int]]:
+        """Explicitly check rate limit using the /rate_limit endpoint."""
+        url = f"{GITHUB_API_BASE}/rate_limit"
+        try:
+            resp = requests.get(url, headers=self._headers(), timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                core = data.get("resources", {}).get("core", {})
+                if not core: # Fallback for some API versions
+                    core = data.get("rate", {})
+                
+                self.requests_remaining = core.get("remaining")
+                self.requests_limit = core.get("limit")
+            self._update_rate_limit(resp.headers)
+        except Exception:
+            pass
+        return self.get_rate_limit_info()
+
+    def _update_rate_limit(self, headers: Dict[str, str]) -> None:
+        """Extract rate limit info from response headers."""
+        remaining = headers.get("x-ratelimit-remaining")
+        limit = headers.get("x-ratelimit-limit")
+        if remaining is not None:
+            self.requests_remaining = int(remaining)
+        if limit is not None:
+            self.requests_limit = int(limit)
+
+    def get_rate_limit_info(self) -> Dict[str, Optional[int]]:
+        """Return current rate limit status."""
+        return {
+            "remaining": self.requests_remaining,
+            "limit": self.requests_limit
+        }
 
     def _headers(self) -> Dict[str, str]:
         headers = {"Accept": "application/vnd.github+json"}
@@ -60,6 +100,7 @@ class GitHubAnalyzer:
 
     def _get_json(self, url: str, timeout: int = 12) -> Optional[Dict]:
         resp = requests.get(url, headers=self._headers(), timeout=timeout)
+        self._update_rate_limit(resp.headers)
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
@@ -67,6 +108,7 @@ class GitHubAnalyzer:
 
     def _get(self, url: str, timeout: int = 12) -> requests.Response:
         resp = requests.get(url, headers=self._headers(), timeout=timeout)
+        self._update_rate_limit(resp.headers)
         if resp.status_code == 404:
             return resp
         resp.raise_for_status()
@@ -75,6 +117,90 @@ class GitHubAnalyzer:
     def _repo_metadata(self, owner: str, repo: str) -> Dict:
         url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}"
         return self._get_json(url) or {}
+
+    def _get_tree(self, owner: str, repo: str, sha: str) -> Dict:
+        url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/git/trees/{sha}?recursive=1"
+        return self._get_json(url) or {}
+
+    def _get_line_count(self, owner: str, repo: str, blob_sha: str) -> int:
+        if not hasattr(self, '_blob_cache'):
+            self._blob_cache = {}
+        
+        if blob_sha in self._blob_cache:
+            return self._blob_cache[blob_sha]
+
+        url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/git/blobs/{blob_sha}"
+        
+        try:
+            resp = requests.get(url, headers=self._headers(), timeout=12)
+            self._update_rate_limit(resp.headers)
+            if resp.status_code != 200:
+                return 0
+            
+            data = resp.json()
+            # The GitHub API returns content in the 'content' field as a base64 string
+            encoded = data.get("content", "")
+            if not encoded:
+                return 0
+                
+            import base64
+            try:
+                # Remove any potential whitespace/newlines in the base64 string
+                cleaned_encoded = "".join(encoded.split())
+                content_bytes = base64.b64decode(cleaned_encoded)
+                
+                # Heuristic check if content is binary
+                if self._is_binary_content(content_bytes):
+                    self._blob_cache[blob_sha] = 0
+                    return 0
+
+                content_str = content_bytes.decode("utf-8", errors="ignore")
+                
+                # Count lines accurately
+                if not content_str:
+                    lines = 0
+                else:
+                    lines = content_str.count('\n')
+                    if not content_str.endswith('\n'):
+                        lines += 1
+                
+                self._blob_cache[blob_sha] = lines
+                return lines
+            except Exception:
+                return 0
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _is_binary_content(content: bytes) -> bool:
+        """Heuristic check if content is binary."""
+        if not content:
+            return False
+        # Check first 1024 bytes for null bytes
+        chunk = content[:1024]
+        return b'\x00' in chunk
+
+    @staticmethod
+    def _is_binary(path: str) -> bool:
+        # Minimal list to avoid skipping potential source code files
+        binary_extensions = {
+            '.png', '.jpg', '.jpeg', '.gif', '.ico', '.webp', '.bmp', '.tiff',
+            '.pdf', '.zip', '.gz', '.tar', '.exe', '.dll', '.bin', '.pyc',
+            '.mp3', '.mp4', '.wav', '.avi', '.ttf', '.otf', '.woff', '.woff2',
+            '.ds_store', '.sqlite', '.db'
+        }
+        import os
+        _, ext = os.path.splitext(path.lower())
+        
+        # Always count lines for common code files
+        code_extensions = {
+            '.py', '.js', '.ts', '.html', '.css', '.c', '.cpp', '.h', '.hpp',
+            '.java', '.json', '.yaml', '.yml', '.md', '.txt', '.sh', '.bat'
+        }
+        if ext in code_extensions:
+            return False
+            
+        return ext in binary_extensions
 
     def _commits_page(self, owner: str, repo: str, branch: str, page: int, per_page: int = 100) -> List[Dict]:
         url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits?per_page={per_page}&sha={branch}&page={page}"
@@ -107,6 +233,7 @@ class GitHubAnalyzer:
     def _has_readme(self, owner: str, repo: str) -> bool:
         url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/readme"
         resp = requests.get(url, headers=self._headers(), timeout=10)
+        self._update_rate_limit(resp.headers)
         return resp.status_code == 200
 
     def analyze(self, team_name: str, repo_url: str, track: str, members: str, progress_cb=None) -> RepoAnalysis:
@@ -230,7 +357,30 @@ class GitHubAnalyzer:
                 if not date_utc:
                     date_utc = str((commit.get("committer") or {}).get("date") or "")
 
-                results.append(CommitEntry(sha=sha, message=message, author=author, date_utc=date_utc))
+                # Fetch tree for this commit to count files and calculate total lines
+                tree = self._get_tree(owner, repo, sha)
+                total_files = 0
+                total_lines = 0
+                
+                if tree and "tree" in tree:
+                    for item in tree["tree"]:
+                        if item.get("type") == "blob":
+                            total_files += 1
+                            path = item.get("path", "")
+                            # Explicitly check for code files
+                            if not self._is_binary(path):
+                                blob_sha = item.get("sha")
+                                lines = self._get_line_count(owner, repo, blob_sha)
+                                total_lines += lines
+                
+                results.append(CommitEntry(
+                    sha=sha, 
+                    message=message, 
+                    author=author, 
+                    date_utc=date_utc,
+                    total_lines=total_lines,
+                    total_files=total_files
+                ))
 
             if progress_cb:
                 progress_cb("fetch", min(95, 50 + page * 10), f"Pulled commits page {page} for {repo}")

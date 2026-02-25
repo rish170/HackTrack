@@ -23,20 +23,18 @@ EXCEL_COLUMNS = [
 ]
 
 COMMIT_HISTORY_HEADERS = [
-    "Commit SHA",
+    "Sno",
+    "Commit Date",
+    "Commit Time",
     "Commit Message",
-    "Commit Author",
-    "Commit Date (UTC)",
-    "Branch",
-    "Total Commits at Snapshot",
+    "Total Lines",
+    "Total Files",
     "Languages",
-    "README Present",
     "Snapshot Timestamp",
 ]
 
 STATUS_PHASES = {
     "fetch": "Fetching from GitHub",
     "process": "Processing data",
-    "excel": "Saving to Excel",
     "sheets": "Saving to Google Sheets",
 }
